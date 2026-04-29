@@ -1,0 +1,156 @@
+name: Pre-Merge
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pre-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin gitleaks
+
+      - name: Scan PR commits
+        run: gitleaks detect --redact -v --log-opts="origin/${{ github.base_ref }}..HEAD"
+
+  detect-changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      hacs: ${{ steps.filter.outputs.hacs }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'src/**'
+              - 'test/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.json'
+              - 'rollup.config.mjs'
+              - 'vitest.config.ts'
+              - '.eslintrc*'
+              - '.prettierrc*'
+            hacs:
+              - 'hacs.json'
+              - 'README.md'
+              - 'dist/**'
+              - 'src/**'
+              - 'package.json'
+            workflows:
+              - '.github/workflows/**'
+
+  typescript:
+    name: TypeScript checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  hacs-validate:
+    name: HACS validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: detect-changes
+    if: needs.detect-changes.outputs.hacs == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hacs/action@main
+        with:
+          category: plugin
+
+  workflows-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: detect-changes
+    if: needs.detect-changes.outputs.workflows == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install actionlint
+        run: |
+          bash <(curl -sSf https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          sudo mv actionlint /usr/local/bin/
+
+      - name: Lint workflows
+        run: actionlint
+
+  pre-merge-status:
+    name: Pre-merge status
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [secret-scan, typescript, hacs-validate, workflows-lint]
+    steps:
+      - name: Aggregate results
+        env:
+          SECRET: ${{ needs.secret-scan.result }}
+          TS: ${{ needs.typescript.result }}
+          HACS: ${{ needs.hacs-validate.result }}
+          WF: ${{ needs.workflows-lint.result }}
+        run: |
+          echo "secret-scan:    $SECRET"
+          echo "typescript:     $TS"
+          echo "hacs-validate:  $HACS"
+          echo "workflows-lint: $WF"
+          failed=""
+          for pair in "secret-scan:$SECRET" "typescript:$TS" "hacs-validate:$HACS" "workflows-lint:$WF"; do
+            name=${pair%%:*}
+            result=${pair##*:}
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              failed="$failed $name"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo ""
+            echo "Failed:$failed"
+            exit 1
+          fi
+          echo ""
+          echo "All pre-merge checks passed"

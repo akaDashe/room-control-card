@@ -1,0 +1,10 @@
+node_modules/
+.DS_Store
+.vscode/settings.json
+.idea/
+*.log
+coverage/
+.env
+
+# TypeScript declarations emitted alongside the bundle aren't needed for HACS.
+dist/src/

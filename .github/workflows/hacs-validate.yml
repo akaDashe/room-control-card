@@ -1,0 +1,31 @@
+name: HACS Validation (scheduled)
+
+# Sanity check that the repo still passes HACS plugin validation independent of
+# pre-merge changes. Pre-merge already runs hacs/action on PRs that touch
+# HACS-relevant files; this workflow guards against external HACS rule changes.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hacs-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: HACS plugin validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hacs/action@main
+        with:
+          category: plugin

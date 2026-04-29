@@ -1,0 +1,246 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Manual version bump'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    # Skip the bump commit we push from this workflow. GITHUB_TOKEN pushes don't
+    # re-trigger workflows by design, but this guards against PAT misuse and
+    # against rebase scenarios that replay the message on main.
+    if: "!startsWith(github.event.head_commit.message, 'release: deploy version')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Determine bump type
+        id: bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_BUMP: ${{ inputs.bump_type }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "Manual dispatch — bump $MANUAL_BUMP"
+            {
+              echo "skip=false"
+              echo "bump_type=$MANUAL_BUMP"
+              echo "pr_number="
+              echo "pr_title<<EOF"
+              echo "Manual release ($MANUAL_BUMP)"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          commit_msg=$(git log --format=%B -n 1 HEAD)
+          echo "Commit: $commit_msg"
+
+          # Extract PR number from merge commit (e.g. "Merge pull request #N from ...")
+          pr_number=$(echo "$commit_msg" | grep -oE '#[0-9]+' | head -1 | tr -d '#' || true)
+          if [ -z "$pr_number" ]; then
+            echo "No PR number in merge commit — skipping release"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "PR: #$pr_number"
+
+          pr_json=$(gh pr view "$pr_number" --json headRefName,title 2>/dev/null || true)
+          if [ -z "$pr_json" ]; then
+            echo "Could not fetch PR #$pr_number — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          branch=$(echo "$pr_json" | jq -r .headRefName)
+          pr_title=$(echo "$pr_json" | jq -r .title)
+          prefix=$(echo "$branch" | cut -d/ -f1)
+          echo "Branch: $branch (prefix: $prefix)"
+
+          case "$prefix" in
+            feat|feature)
+              bump_type="minor" ;;
+            fix|bug|bugfix|hotfix|patch)
+              bump_type="patch" ;;
+            chore|docs|refactor|test|ci|build|style|perf|dependabot)
+              echo "Branch prefix '$prefix' — no version bump"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+            *)
+              echo "Unknown branch prefix '$prefix' — skipping"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+          esac
+
+          # Override to major if breaking change is signalled
+          if echo "$branch" | grep -qi 'breaking' || echo "$commit_msg" | grep -qE '^[a-z]+!:'; then
+            bump_type="major"
+          fi
+
+          echo "Bump type: $bump_type"
+          {
+            echo "skip=false"
+            echo "bump_type=$bump_type"
+            echo "pr_number=$pr_number"
+            echo "pr_title<<EOF"
+            echo "$pr_title"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute new version
+        id: version
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          BUMP: ${{ steps.bump.outputs.bump_type }}
+        run: |
+          set -euo pipefail
+          current=$(node -p "require('./package.json').version")
+          # Strip pre-release suffix (-beta.N, -rc.N, etc.) before bumping
+          base=${current%%-*}
+          IFS=. read -r major minor patch <<<"$base"
+          case "$BUMP" in
+            major) new="$((major + 1)).0.0" ;;
+            minor) new="$major.$((minor + 1)).0" ;;
+            patch) new="$major.$minor.$((patch + 1))" ;;
+          esac
+          echo "Bumping $current -> $new ($BUMP)"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Update package.json + CHANGELOG.md
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+          BUMP: ${{ steps.bump.outputs.bump_type }}
+          PR_NUMBER: ${{ steps.bump.outputs.pr_number }}
+          PR_TITLE: ${{ steps.bump.outputs.pr_title }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # package.json
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.version = process.env.NEW;
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+          # package-lock.json (top-level + root package entry)
+          if [ -f package-lock.json ]; then
+            node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+              p.version = process.env.NEW;
+              if (p.packages && p.packages['']) p.packages[''].version = process.env.NEW;
+              fs.writeFileSync('package-lock.json', JSON.stringify(p, null, 2) + '\n');
+            "
+          fi
+
+          # CHANGELOG.md
+          today=$(date +%Y-%m-%d)
+          case "$BUMP" in
+            major) category=Changed ;;
+            minor) category=Added ;;
+            patch) category=Fixed ;;
+          esac
+          if [ -n "$PR_NUMBER" ]; then
+            entry="- $PR_TITLE ([#$PR_NUMBER](https://github.com/$REPO/pull/$PR_NUMBER))"
+          else
+            entry="- $PR_TITLE"
+          fi
+          new_section=$(printf '## [%s] - %s\n\n### %s\n\n%s' "$NEW" "$today" "$category" "$entry")
+
+          if [ -f CHANGELOG.md ] && grep -q '## \[Unreleased\]' CHANGELOG.md; then
+            line=$(grep -n '## \[Unreleased\]' CHANGELOG.md | head -1 | cut -d: -f1)
+            head -n "$line" CHANGELOG.md > CHANGELOG.tmp
+            printf '\n%s\n' "$new_section" >> CHANGELOG.tmp
+            tail -n +"$((line + 1))" CHANGELOG.md >> CHANGELOG.tmp
+            mv CHANGELOG.tmp CHANGELOG.md
+          else
+            {
+              echo "# Changelog"
+              echo
+              echo "All notable changes to this project will be documented in this file."
+              echo ""
+              echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),"
+              echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
+              echo
+              echo "## [Unreleased]"
+              echo
+              printf '%s\n' "$new_section"
+            } > CHANGELOG.md
+          fi
+
+          # Release notes for the GitHub Release
+          printf '### %s\n\n%s\n' "$category" "$entry" > .release_notes.md
+
+      - name: Install dependencies
+        if: steps.bump.outputs.skip != 'true'
+        run: npm ci
+
+      - name: Build
+        if: steps.bump.outputs.skip != 'true'
+        run: npm run build
+
+      - name: Verify build artifact
+        if: steps.bump.outputs.skip != 'true'
+        run: test -f dist/status-button-card.js
+
+      - name: Commit, tag, push
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          NEW: ${{ steps.version.outputs.new }}
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json CHANGELOG.md dist/
+          if [ -f package-lock.json ]; then
+            git add package-lock.json
+          fi
+          git commit -m "release: deploy version $NEW"
+          git tag "v$NEW"
+          git push origin main --follow-tags
+
+      - name: Create GitHub Release
+        if: steps.bump.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW: ${{ steps.version.outputs.new }}
+        run: |
+          gh release create "v$NEW" \
+            --title "v$NEW" \
+            --notes-file .release_notes.md \
+            dist/status-button-card.js

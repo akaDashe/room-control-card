@@ -1,0 +1,43 @@
+{
+  "name": "room-control-card",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Compact room control card for Home Assistant with expandable per-entity controls",
+  "main": "dist/room-control-card.js",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c --watch",
+    "deploy": "DEPLOY=1 rollup -c",
+    "dev": "DEPLOY=1 rollup -c --watch",
+    "bump": "python3 scripts/bump-resource.py --name room-control-card",
+    "push": "npm run deploy && npm run bump",
+    "lint": "eslint \"src/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.ts\" --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prebuild": "npm run lint"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.2.0",
+    "@rollup/plugin-terser": "^0.4.0",
+    "@rollup/plugin-typescript": "^11.1.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-lit": "^1.11.0",
+    "prettier": "^3.2.0",
+    "rollup": "^4.9.0",
+    "tslib": "^2.6.0",
+    "typescript": "~5.3.0",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "lit": "^3.1.0"
+  }
+}
