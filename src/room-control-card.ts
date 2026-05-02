@@ -153,10 +153,12 @@ export class RoomControlCard extends LitElement {
   private _getActiveColor(ec: EntityConfig, entity: HassEntity): string {
     if (ec.active_color) return ec.active_color;
     const domain = this._getDomain(entity.entity_id);
-    // Use the light's actual RGB color when available
     if (domain === "light" && entity.attributes.rgb_color) {
       const [r, g, b] = entity.attributes.rgb_color;
-      return `rgb(${r}, ${g}, ${b})`;
+      // Skip near-white colors: they're invisible on light-mode card backgrounds.
+      // Perceived luminance threshold of 0.85 catches pure white and warm whites.
+      const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      if (lum < 0.85) return `rgb(${r}, ${g}, ${b})`;
     }
     return DOMAIN_ACTIVE_COLORS[domain] || "var(--state-icon-active-color, var(--primary-color))";
   }
