@@ -35,9 +35,7 @@ describe("DEFAULT_ACTIVE_STATES", () => {
   });
 
   it("includes climate hvac modes", () => {
-    expect(DEFAULT_ACTIVE_STATES.climate).toEqual(
-      expect.arrayContaining(["heat", "cool", "auto"]),
-    );
+    expect(DEFAULT_ACTIVE_STATES.climate).toEqual(expect.arrayContaining(["heat", "cool", "auto"]));
   });
 });
 
