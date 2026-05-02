@@ -35,11 +35,7 @@ function makeCard(
   return card;
 }
 
-function ent(
-  entity_id: string,
-  state: string,
-  attributes: Record<string, any> = {},
-): HassEntity {
+function ent(entity_id: string, state: string, attributes: Record<string, any> = {}): HassEntity {
   return { entity_id, state, attributes, last_changed: "", last_updated: "" };
 }
 
@@ -136,7 +132,13 @@ describe("_isActive", () => {
       const card = makeCard();
       const e = ent("climate.main", "heat", { hvac_action: "heating" });
       expect(
-        card._isActive(ec("climate.main", { active_attribute: "hvac_action", active_attribute_value: "heating" }), e),
+        card._isActive(
+          ec("climate.main", {
+            active_attribute: "hvac_action",
+            active_attribute_value: "heating",
+          }),
+          e,
+        ),
       ).toBe(true);
     });
 
@@ -144,20 +146,30 @@ describe("_isActive", () => {
       const card = makeCard();
       const e = ent("climate.main", "heat", { hvac_action: "idle" });
       expect(
-        card._isActive(ec("climate.main", { active_attribute: "hvac_action", active_attribute_value: "heating" }), e),
+        card._isActive(
+          ec("climate.main", {
+            active_attribute: "hvac_action",
+            active_attribute_value: "heating",
+          }),
+          e,
+        ),
       ).toBe(false);
     });
 
     it("returns true for truthy attribute when no expected value set", () => {
       const card = makeCard();
       const e = ent("binary_sensor.motion", "on", { occupancy: true });
-      expect(card._isActive(ec("binary_sensor.motion", { active_attribute: "occupancy" }), e)).toBe(true);
+      expect(card._isActive(ec("binary_sensor.motion", { active_attribute: "occupancy" }), e)).toBe(
+        true,
+      );
     });
 
     it("returns false for falsy attribute when no expected value set", () => {
       const card = makeCard();
       const e = ent("binary_sensor.motion", "on", { occupancy: false });
-      expect(card._isActive(ec("binary_sensor.motion", { active_attribute: "occupancy" }), e)).toBe(false);
+      expect(card._isActive(ec("binary_sensor.motion", { active_attribute: "occupancy" }), e)).toBe(
+        false,
+      );
     });
 
     it("attribute check takes priority over state-based checks", () => {
@@ -172,13 +184,17 @@ describe("_isActive", () => {
     it("returns true when entity state is in active_states list", () => {
       const card = makeCard();
       const e = ent("media_player.tv", "playing", {});
-      expect(card._isActive(ec("media_player.tv", { active_states: ["playing", "paused"] }), e)).toBe(true);
+      expect(
+        card._isActive(ec("media_player.tv", { active_states: ["playing", "paused"] }), e),
+      ).toBe(true);
     });
 
     it("returns false when entity state is not in active_states list", () => {
       const card = makeCard();
       const e = ent("media_player.tv", "standby", {});
-      expect(card._isActive(ec("media_player.tv", { active_states: ["playing", "paused"] }), e)).toBe(false);
+      expect(
+        card._isActive(ec("media_player.tv", { active_states: ["playing", "paused"] }), e),
+      ).toBe(false);
     });
 
     it("custom active_states override domain defaults", () => {
@@ -249,7 +265,9 @@ describe("_getIcon", () => {
   it("returns ec.icon when explicitly set", () => {
     const card = makeCard();
     const e = ent("light.test", "on");
-    expect(card._getIcon(ec("light.test", { icon: "mdi:lightbulb-on" }), e)).toBe("mdi:lightbulb-on");
+    expect(card._getIcon(ec("light.test", { icon: "mdi:lightbulb-on" }), e)).toBe(
+      "mdi:lightbulb-on",
+    );
   });
 
   it("ec.icon takes priority over entity attribute icon", () => {
@@ -335,6 +353,19 @@ describe("_getActiveColor", () => {
     const e = ent("light.test", "on", { rgb_color: [255, 0, 0] });
     expect(card._getActiveColor(ec("light.test", { active_color: "blue" }), e)).toBe("blue");
   });
+
+  it("falls back to domain color when light rgb_color is near-white (lum >= 0.85)", () => {
+    const card = makeCard();
+    const e = ent("light.test", "on", { rgb_color: [255, 255, 255] });
+    expect(card._getActiveColor(ec("light.test"), e)).toBe(DOMAIN_ACTIVE_COLORS["light"]);
+  });
+
+  it("uses rgb_color for a saturated color well below the luminance threshold", () => {
+    const card = makeCard();
+    // lum ≈ 0.54 — amber, clearly visible on both light and dark backgrounds
+    const e = ent("light.test", "on", { rgb_color: [255, 160, 0] });
+    expect(card._getActiveColor(ec("light.test"), e)).toBe("rgb(255, 160, 0)");
+  });
 });
 
 // ─── _getInactiveColor ───────────────────────────────────────────────────────
@@ -400,7 +431,12 @@ describe("_getBorderRadiusStyle", () => {
 
   it("includes all four corner values in border-radius", () => {
     const card = makeCard({
-      border_radius: { top_left: "4px", top_right: "8px", bottom_right: "12px", bottom_left: "16px" },
+      border_radius: {
+        top_left: "4px",
+        top_right: "8px",
+        bottom_right: "12px",
+        bottom_left: "16px",
+      },
     });
     const style = card._getBorderRadiusStyle();
     expect(style).toContain("border-radius: 4px 8px 12px 16px");
