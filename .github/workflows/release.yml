@@ -254,7 +254,8 @@ jobs:
           fi
           git commit -m "release: deploy version $NEW"
           git tag "v$NEW"
-          git push origin main --follow-tags
+          git push origin main
+          git push origin "v$NEW"
 
       - name: Create GitHub Release
         if: steps.bump.outputs.skip != 'true'
