@@ -14,6 +14,11 @@ on:
           - patch
           - minor
           - major
+      prerelease:
+        description: 'Create as pre-release (appends -beta.N to version)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: release
@@ -123,6 +128,7 @@ jobs:
         if: steps.bump.outputs.skip != 'true'
         env:
           BUMP: ${{ steps.bump.outputs.bump_type }}
+          PRERELEASE: ${{ inputs.prerelease || 'false' }}
         run: |
           set -euo pipefail
           current=$(node -p "require('./package.json').version")
@@ -134,6 +140,15 @@ jobs:
             minor) new="$major.$((minor + 1)).0" ;;
             patch) new="$major.$minor.$((patch + 1))" ;;
           esac
+          if [ "$PRERELEASE" = "true" ]; then
+            # If the current version is already a beta of this target, increment the beta number
+            if echo "$current" | grep -qE "^${new}-beta\.[0-9]+$"; then
+              beta_n=$(echo "$current" | grep -oE '[0-9]+$')
+              new="${new}-beta.$((beta_n + 1))"
+            else
+              new="${new}-beta.1"
+            fi
+          fi
           echo "Bumping $current -> $new ($BUMP)"
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "new=$new" >> "$GITHUB_OUTPUT"
@@ -146,6 +161,7 @@ jobs:
           PR_NUMBER: ${{ steps.bump.outputs.pr_number }}
           PR_TITLE: ${{ steps.bump.outputs.pr_title }}
           REPO: ${{ github.repository }}
+          PRERELEASE: ${{ inputs.prerelease || 'false' }}
         run: |
           set -euo pipefail
 
@@ -168,7 +184,9 @@ jobs:
             "
           fi
 
-          # CHANGELOG.md
+          # src/const.ts — keep CARD_VERSION in sync with package.json
+          sed -i "s/export const CARD_VERSION = \"[^\"]*\"/export const CARD_VERSION = \"$NEW\"/" src/const.ts
+
           today=$(date +%Y-%m-%d)
           case "$BUMP" in
             major) category=Changed ;;
@@ -180,30 +198,34 @@ jobs:
           else
             entry="- $PR_TITLE"
           fi
-          new_section=$(printf '## [%s] - %s\n\n### %s\n\n%s' "$NEW" "$today" "$category" "$entry")
 
-          if [ -f CHANGELOG.md ] && grep -q '## \[Unreleased\]' CHANGELOG.md; then
-            line=$(grep -n '## \[Unreleased\]' CHANGELOG.md | head -1 | cut -d: -f1)
-            head -n "$line" CHANGELOG.md > CHANGELOG.tmp
-            printf '\n%s\n' "$new_section" >> CHANGELOG.tmp
-            tail -n +"$((line + 1))" CHANGELOG.md >> CHANGELOG.tmp
-            mv CHANGELOG.tmp CHANGELOG.md
-          else
-            {
-              echo "# Changelog"
-              echo
-              echo "All notable changes to this project will be documented in this file."
-              echo ""
-              echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),"
-              echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
-              echo
-              echo "## [Unreleased]"
-              echo
-              printf '%s\n' "$new_section"
-            } > CHANGELOG.md
+          # Skip CHANGELOG for pre-releases; they aren't stable entries
+          if [ "$PRERELEASE" != "true" ]; then
+            new_section=$(printf '## [%s] - %s\n\n### %s\n\n%s' "$NEW" "$today" "$category" "$entry")
+
+            if [ -f CHANGELOG.md ] && grep -q '## \[Unreleased\]' CHANGELOG.md; then
+              line=$(grep -n '## \[Unreleased\]' CHANGELOG.md | head -1 | cut -d: -f1)
+              head -n "$line" CHANGELOG.md > CHANGELOG.tmp
+              printf '\n%s\n' "$new_section" >> CHANGELOG.tmp
+              tail -n +"$((line + 1))" CHANGELOG.md >> CHANGELOG.tmp
+              mv CHANGELOG.tmp CHANGELOG.md
+            else
+              {
+                echo "# Changelog"
+                echo
+                echo "All notable changes to this project will be documented in this file."
+                echo ""
+                echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),"
+                echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
+                echo
+                echo "## [Unreleased]"
+                echo
+                printf '%s\n' "$new_section"
+              } > CHANGELOG.md
+            fi
           fi
 
-          # Release notes for the GitHub Release
+          # Release notes for the GitHub Release (always generated)
           printf '### %s\n\n%s\n' "$category" "$entry" > .release_notes.md
 
       - name: Install dependencies
@@ -216,7 +238,7 @@ jobs:
 
       - name: Verify build artifact
         if: steps.bump.outputs.skip != 'true'
-        run: test -f dist/status-button-card.js
+        run: test -f dist/room-control-card.js
 
       - name: Commit, tag, push
         if: steps.bump.outputs.skip != 'true'
@@ -226,7 +248,7 @@ jobs:
           set -euo pipefail
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json CHANGELOG.md dist/
+          git add package.json CHANGELOG.md dist/ src/const.ts
           if [ -f package-lock.json ]; then
             git add package-lock.json
           fi
@@ -239,8 +261,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW: ${{ steps.version.outputs.new }}
+          PRERELEASE: ${{ inputs.prerelease || 'false' }}
         run: |
+          prerelease_flag=""
+          [ "$PRERELEASE" = "true" ] && prerelease_flag="--prerelease"
           gh release create "v$NEW" \
             --title "v$NEW" \
             --notes-file .release_notes.md \
-            dist/status-button-card.js
+            $prerelease_flag \
+            dist/room-control-card.js
