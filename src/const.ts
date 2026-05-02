@@ -1,6 +1,6 @@
 export const CARD_TAG = "room-control-card";
 export const EDITOR_TAG = "room-control-card-editor";
-export const CARD_VERSION = "0.5.0-beta.1";
+export const CARD_VERSION = "0.6.0-beta.1";
 
 export const DEFAULT_ACTIVE_STATES: Record<string, string[]> = {
   light: ["on"],
