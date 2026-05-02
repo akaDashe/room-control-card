@@ -1,6 +1,6 @@
 {
   "name": "room-control-card",
-  "version": "0.6.0-beta.1",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "description": "Compact room control card for Home Assistant with expandable per-entity controls",

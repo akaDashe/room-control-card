@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-02
+
+### Fixed
+
+- fix: skip near-white light rgb_color in light mode ([#2](https://github.com/akaDashe/room-control-card/pull/2))
+
 ## [0.4.0] - 2026-04-29
 
 Initial public release as a HACS-installable plugin.
